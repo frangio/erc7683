@@ -1,0 +1,7 @@
+{
+  "type": "module",
+  "dependencies": {
+    "abitype": "^1.2.3",
+    "viem": "^2.41.2"
+  }
+}
