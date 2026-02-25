@@ -1,6 +1,6 @@
 import type { Hex, Address, PublicClient } from 'viem';
 import { decodeFunctionData, getAddress, toHex, hexToBigInt, hexToNumber, size, slice } from 'viem';
-import type { ResolvedOrder, Account, Argument, Attribute, Formula, Payment, Step, VariableRole } from './types.ts';
+import type { Attributes, Attribute, ResolvedOrder, Account, Argument, Formula, Payment, Step, VariableRole } from './types.ts';
 import { resolverAbi, attributeAbi, formulaAbi, paymentAbi, stepAbi, variableRoleAbi } from './abis.ts';
 import { decodeAbiWrappedValue } from './abi-wrap.ts';
 
@@ -25,15 +25,14 @@ function decodeStep(data: Hex): Step {
 
   switch (decoded.functionName) {
     case 'Call': {
-      const [target, selector, arguments_, attributes, dependencySteps, payments] =
+      const [target, selector, arguments_, attributes, payments] =
         decoded.args;
       return {
         type: 'Call',
         target: decodeERC7930Address(target),
         selector,
         arguments: arguments_.map(decodeArgument),
-        attributes: attributes.map(decodeAttribute),
-        dependencySteps: dependencySteps.map(toSafeNumber),
+        attributes: decodeAttributes(attributes),
         payments: payments.map(decodePayment),
       };
     }
@@ -46,7 +45,7 @@ function decodeArgument(encoded: Hex): Argument {
     const varIdx = hexToNumber(encoded);
     return { type: 'Variable', varIdx };
   } else {
-    return { type: 'AbiWrappedValue', value: decodeAbiWrappedValue(encoded) };
+    return { type: 'AbiEncodedValue', value: decodeAbiWrappedValue(encoded) };
   }
 }
 
@@ -55,12 +54,13 @@ function decodeAttribute(encoded: Hex): Attribute {
 
   switch (decoded.functionName) {
     case 'SpendsERC20': {
-      const [token, amountFormula, spender] = decoded.args;
+      const [token, amountFormula, spender, receiver] = decoded.args;
       return {
         type: 'SpendsERC20',
         token: decodeERC7930Address(token),
         amountFormula: decodeFormula(amountFormula),
         spender: decodeERC7930Address(spender),
+        receiver: decodeERC7930Address(receiver),
       };
     }
     case 'SpendsEstimatedGas': {
@@ -70,28 +70,23 @@ function decodeAttribute(encoded: Hex): Attribute {
         amountFormula: decodeFormula(amountFormula),
       };
     }
-    case 'OnlyBefore': {
+    case 'RequiredBefore': {
       const [deadline] = decoded.args;
-      return { type: 'OnlyBefore', deadline };
+      return { type: 'RequiredBefore', deadline };
     }
-    case 'OnlyFillerUntil': {
+    case 'RequiredFillerUntil': {
       const [exclusiveFiller, deadline] = decoded.args;
-      return { type: 'OnlyFillerUntil', exclusiveFiller, deadline };
+      return { type: 'RequiredFillerUntil', exclusiveFiller, deadline };
     }
-    case 'OnlyWhenCallResult': {
-      const [target, selector, arguments_, result, maxGasCost] = decoded.args;
+    case 'RequiredCallResult': {
+      const [target, selector, arguments_, result] = decoded.args;
       return {
-        type: 'OnlyWhenCallResult',
+        type: 'RequiredCallResult',
         target: decodeERC7930Address(target),
         selector,
         arguments: arguments_.map(decodeArgument),
         result,
-        maxGasCost,
       };
-    }
-    case 'UnlessRevert': {
-      const [reason] = decoded.args;
-      return { type: 'UnlessRevert', reason };
     }
     case 'WithTimestamp': {
       const [timestampVarIdx] = decoded.args;
@@ -105,29 +100,41 @@ function decodeAttribute(encoded: Hex): Attribute {
       const [gasPriceVarIdx] = decoded.args;
       return { type: 'WithEffectiveGasPrice', gasPriceVarIdx: toSafeNumber(gasPriceVarIdx) };
     }
-    case 'WithLog': {
-      const [mask, topicVarIdxs, dataVarIdx] = decoded.args;
-      return {
-        type: 'WithLog',
-        mask,
-        topicVarIdxs: topicVarIdxs.map(toSafeNumber),
-        dataVarIdx: toSafeNumber(dataVarIdx),
-      };
+  }
+}
+
+function decodeAttributes(encoded: readonly Hex[]): Attributes {
+  const attributes: Attributes = { SpendsERC20: [], RevertPolicy: [] };
+
+  for (const entry of encoded) {
+    const decoded = decodeAttribute(entry);
+    if (decoded.type === 'SpendsERC20') {
+      attributes.SpendsERC20.push(decoded);
+    } else if (decoded.type === 'RevertPolicy') {
+      attributes.RevertPolicy.push(decoded);
+    } else {
+      if (decoded.type in attributes) {
+        throw new Error(`Multiple ${decoded.type} attributes`);
+      }
+      /// @ts-ignore: TypeScript is not able to type this
+      attributes[decoded.type] = decoded;
     }
   }
+
+  return attributes;
 }
 
 function decodeFormula(encoded: Hex): Formula {
   const decoded = decodeFunctionData({ abi: formulaAbi, data: encoded });
 
   switch (decoded.functionName) {
-    case 'Const': {
-      const [val] = decoded.args;
-      return { type: 'Const', val };
+    case 'Constant': {
+      const [value] = decoded.args;
+      return { type: 'Constant', value };
     }
-    case 'VarRef': {
+    case 'Variable': {
       const [varIdx] = decoded.args;
-      return { type: 'VarRef', varIdx: toSafeNumber(varIdx) };
+      return { type: 'Variable', varIdx: toSafeNumber(varIdx) };
     }
   }
 }
@@ -160,11 +167,12 @@ function decodePayment(encoded: Hex): Payment {
 
   switch (decoded.functionName) {
     case 'ERC20': {
-      const [token, amountFormula, recipientVarIdx, estimatedDelaySeconds] =
+      const [token, sender, amountFormula, recipientVarIdx, estimatedDelaySeconds] =
         decoded.args;
       return {
         type: 'ERC20',
         token: decodeERC7930Address(token),
+        sender: decodeERC7930Address(sender),
         amountFormula: decodeFormula(amountFormula),
         recipientVarIdx: toSafeNumber(recipientVarIdx),
         estimatedDelaySeconds,

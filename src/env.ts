@@ -1,13 +1,13 @@
-import { concat, numberToHex, size, type Hex } from 'viem';
-import type { Account, Argument, VariableRole } from './types.ts';
+import { concat, decodeAbiParameters, numberToHex, size, type Hex } from 'viem';
+import type { Account, Argument, Formula, VariableRole } from './types.ts';
 import type { SolverContext } from './context.ts';
-import { abiWrap, decodeAbiWrappedValue, type AbiWrappedValue } from './abi-wrap.ts';
+import { abiEncode, decodeAbiWrappedValue, type AbiEncodedValue } from './abi-wrap.ts';
 
 // Assumes resolver does not create dependency cycles between variables.
 export class VariableEnv {
   private ctx: SolverContext;
   private roles: VariableRole[];
-  private cache: { value?: Promise<AbiWrappedValue>; tick: number }[];
+  private cache: { value?: Promise<AbiEncodedValue>; tick: number }[];
   private tick = 0;
 
   constructor(ctx: SolverContext, roles: VariableRole[]) {
@@ -16,11 +16,23 @@ export class VariableEnv {
     this.cache = roles.map(() => ({ tick: -1 }));
   }
 
-  set(varIdx: number, value: AbiWrappedValue): void {
-    this.cache[varIdx] = { value: Promise.resolve(value), tick: this.tick++ };
+  set(varIdx: number, value: AbiEncodedValue): void {
+    const role = this.roles[varIdx]!;
+    switch (role.type) {
+      case 'Pricing':
+      case 'TxOutput':
+      case 'Witness': {
+        this.cache[varIdx] = { value: Promise.resolve(value), tick: this.tick++ };
+        break;
+      }
+
+      default: {
+        throw new Error(`Variable ${varIdx} (${role.type}) cannot be set`);
+      }
+    }
   }
 
-  async get(varIdx: number): Promise<AbiWrappedValue> {
+  async get(varIdx: number): Promise<AbiEncodedValue> {
     if (this.isFresh(varIdx)) {
       return this.cache[varIdx]!.value!;
     }
@@ -29,20 +41,24 @@ export class VariableEnv {
     return value;
   }
 
-  private async recompute(varIdx: number): Promise<AbiWrappedValue> {
+  private async recompute(varIdx: number): Promise<AbiEncodedValue> {
     const role = this.roles[varIdx]!;
 
     switch (role.type) {
       case 'PaymentChain': {
-        return abiWrap(this.ctx.paymentChain, 'uint256');
+        return abiEncode(this.ctx.paymentChain, 'uint256');
       }
 
       case 'PaymentRecipient': {
-        return abiWrap(this.ctx.paymentRecipient(role.chainId), 'address');
+        return abiEncode(this.ctx.paymentRecipient(role.chainId), 'address');
       }
 
       case 'Query': {
         return decodeAbiWrappedValue(await envCall(this.ctx, this, role));
+      }
+
+      case 'QueryEvents': {
+        throw new Error('TODO');
       }
 
       case 'Pricing':
@@ -91,7 +107,7 @@ export async function envCall(
   env: VariableEnv,
   spec: CallSpec,
 ): Promise<Hex> {
-  const client = ctx.getClient(spec.target.chainId);
+  const client = ctx.getPublicClient(spec.target.chainId);
   const data = await buildCallData(env, spec);
   const result = await client.call({
     to: spec.target.address,
@@ -106,7 +122,7 @@ export async function envSimulateCall(
   env: VariableEnv,
   spec: CallSpec,
 ): Promise<{ gasUsed: bigint; status: 'success' | 'failure' }> {
-  const client = ctx.getClient(spec.target.chainId);
+  const client = ctx.getPublicClient(spec.target.chainId);
   const data = await buildCallData(env, spec);
   const { results } = await client.simulateCalls({
     account: ctx.fillerAddress,
@@ -120,19 +136,17 @@ export async function envSimulateCall(
   return { gasUsed: result.gasUsed, status: result.status };
 }
 
-async function buildCallData(env: VariableEnv, spec: CallSpec): Promise<Hex> {
-  const argValues: AbiWrappedValue[] = [];
-  for (const arg of spec.arguments) {
-    if (arg.type === 'Variable') {
-      argValues.push(await env.get(arg.varIdx));
-    } else {
-      argValues.push(arg.value);
+export async function buildCallData(env: VariableEnv, spec: CallSpec): Promise<Hex> {
+  const argValues = await Promise.all(spec.arguments.map(async arg => {
+    switch (arg.type) {
+      case 'Variable': return env.get(arg.varIdx);
+      case 'AbiEncodedValue': return arg.value;
     }
-  }
+  }));
   return abiEncodeFunctionCall(spec.selector, argValues);
 }
 
-export function abiEncodeFunctionCall(selector: Hex, abiEncodedValues: AbiWrappedValue[]): Hex {
+export function abiEncodeFunctionCall(selector: Hex, abiEncodedValues: AbiEncodedValue[]): Hex {
   if (size(selector) !== 4) {
     throw new Error('Selector must be 4 bytes');
   }
@@ -156,4 +170,20 @@ export function abiEncodeFunctionCall(selector: Hex, abiEncodedValues: AbiWrappe
   }
 
   return concat([selector, ...heads, ...tails]);
+}
+
+export async function envEval(env: VariableEnv, formula: Formula): Promise<bigint> {
+  switch (formula.type) {
+    case 'Constant': {
+      return formula.value;
+    }
+    case 'Variable': {
+      const value = await env.get(formula.varIdx);
+      if (value.type !== 'Static') {
+        throw new Error('Dynamic value used in formula');
+      }
+      const [decoded] = decodeAbiParameters([{ type: 'uint256' }], value.encoding);
+      return decoded;
+    }
+  }
 }

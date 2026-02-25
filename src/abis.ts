@@ -7,29 +7,27 @@ export const resolverAbi = parseAbi([
 ]);
 
 export const stepAbi = parseAbi([
-  'function Call(bytes target, bytes4 selector, bytes[] arguments, bytes[] attributes, uint256[] dependencySteps, bytes[] payments) external',
+  'function Call(bytes target, bytes4 selector, bytes[] arguments, bytes[] attributes, bytes[] payments) external',
 ]);
 
 export const attributeAbi = parseAbi([
-  'function SpendsERC20(bytes token, bytes amountFormula, bytes spender) external',
+  'function SpendsERC20(bytes token, bytes amountFormula, bytes spender, bytes receiver) external',
   'function SpendsEstimatedGas(bytes amountFormula) external',
-  'function OnlyBefore(uint256 deadline) external',
-  'function OnlyFillerUntil(address exclusiveFiller, uint256 deadline) external',
-  'function OnlyWhenCallResult(bytes target, bytes4 selector, bytes[] arguments, bytes result, uint256 maxGasCost) external',
-  'function UnlessRevert(bytes reason) external',
+  'function RequiredBefore(uint256 deadline) external',
+  'function RequiredFillerUntil(address exclusiveFiller, uint256 deadline) external',
+  'function RequiredCallResult(bytes target, bytes4 selector, bytes[] arguments, bytes result) external',
   'function WithTimestamp(uint256 timestampVarIdx) external',
   'function WithBlockNumber(uint256 blockNumberVarIdx) external',
   'function WithEffectiveGasPrice(uint256 gasPriceVarIdx) external',
-  'function WithLog(bytes1 mask, uint256[] topicVarIdxs, uint256 dataVarIdx) external',
 ]);
 
 export const formulaAbi = parseAbi([
-  'function Const(uint256 val) external',
-  'function VarRef(uint256 varIdx) external',
+  'function Constant(uint256 val) external',
+  'function Variable(uint256 varIdx) external',
 ]);
 
 export const paymentAbi = parseAbi([
-  'function ERC20(bytes token, bytes amountFormula, uint256 recipientVarIdx, uint256 estimatedDelaySeconds) external',
+  'function ERC20(bytes token, bytes sender, bytes amountFormula, uint256 recipientVarIdx, uint256 estimatedDelaySeconds) external',
 ]);
 
 export const variableRoleAbi = parseAbi([

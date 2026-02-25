@@ -1,5 +1,5 @@
 import type { Address, Hex } from 'viem';
-import type { AbiWrappedValue } from './abi-wrap.ts';
+import type { AbiEncodedValue } from './abi-wrap.ts';
 
 export interface ResolvedOrder {
   steps: Step[];
@@ -20,28 +20,42 @@ export interface Step_Call {
   target: Account;
   selector: Hex; // bytes4
   arguments: Argument[];
-  attributes: Attribute[];
-  dependencySteps: number[]; // Steps by index in resolved order
+  attributes: Attributes;
   payments: Payment[];
+}
+
+export interface Attributes {
+  SpendsERC20: Attribute_SpendsERC20[];
+  SpendsEstimatedGas?: Attribute_SpendsEstimatedGas;
+
+  RevertPolicy: Attribute_RevertPolicy[];
+
+  RequiredBefore?: Attribute_RequiredBefore;
+  RequiredFillerUntil?: Attribute_RequiredFillerUntil;
+  RequiredCallResult?: Attribute_RequiredCallResult;
+
+  WithTimestamp?: Attribute_WithTimestamp;
+  WithBlockNumber?: Attribute_WithBlockNumber;
+  WithEffectiveGasPrice?: Attribute_WithEffectiveGasPrice;
 }
 
 export type Attribute =
   | Attribute_SpendsERC20
   | Attribute_SpendsEstimatedGas
-  | Attribute_OnlyBefore
-  | Attribute_OnlyFillerUntil
-  | Attribute_OnlyWhenCallResult
-  | Attribute_UnlessRevert
+  | Attribute_RevertPolicy
+  | Attribute_RequiredBefore
+  | Attribute_RequiredFillerUntil
+  | Attribute_RequiredCallResult
   | Attribute_WithTimestamp
   | Attribute_WithBlockNumber
-  | Attribute_WithEffectiveGasPrice
-  | Attribute_WithLog;
+  | Attribute_WithEffectiveGasPrice;
 
 export interface Attribute_SpendsERC20 {
   type: 'SpendsERC20';
   token: Account;
   amountFormula: Formula;
   spender: Account;
+  receiver: Account;
 }
 
 export interface Attribute_SpendsEstimatedGas {
@@ -49,29 +63,29 @@ export interface Attribute_SpendsEstimatedGas {
   amountFormula: Formula;
 }
 
-export interface Attribute_OnlyBefore {
-  type: 'OnlyBefore';
+export interface Attribute_RevertPolicy {
+  type: 'RevertPolicy';
+  policy: 'drop' | 'ignore'; // TODO: 'retry';
+  expectedReason: Hex;
+}
+
+export interface Attribute_RequiredBefore {
+  type: 'RequiredBefore';
   deadline: bigint;
 }
 
-export interface Attribute_OnlyFillerUntil {
-  type: 'OnlyFillerUntil';
+export interface Attribute_RequiredFillerUntil {
+  type: 'RequiredFillerUntil';
   exclusiveFiller: Address;
   deadline: bigint;
 }
 
-export interface Attribute_OnlyWhenCallResult {
-  type: 'OnlyWhenCallResult';
+export interface Attribute_RequiredCallResult {
+  type: 'RequiredCallResult';
   target: Account;
   selector: Hex; // bytes4
   arguments: Argument[];
   result: Hex;
-  maxGasCost: bigint;
-}
-
-export interface Attribute_UnlessRevert {
-  type: 'UnlessRevert';
-  reason: Hex;
 }
 
 export interface Attribute_WithTimestamp {
@@ -89,22 +103,15 @@ export interface Attribute_WithEffectiveGasPrice {
   gasPriceVarIdx: number;
 }
 
-export interface Attribute_WithLog {
-  type: 'WithLog';
-  mask: Hex; // bytes1
-  topicVarIdxs: number[];
-  dataVarIdx: number;
+export type Formula = Formula_Constant | Formula_Variable;
+
+export interface Formula_Constant {
+  type: 'Constant';
+  value: bigint;
 }
 
-export type Formula = Formula_Const | Formula_VarRef;
-
-export interface Formula_Const {
-  type: 'Const';
-  val: bigint;
-}
-
-export interface Formula_VarRef {
-  type: 'VarRef';
+export interface Formula_Variable {
+  type: 'Variable';
   varIdx: number;
 }
 
@@ -113,6 +120,7 @@ export type Payment = Payment_ERC20;
 export interface Payment_ERC20 {
   type: 'ERC20';
   token: Account;
+  sender: Account;
   amountFormula: Formula;
   recipientVarIdx: number;
   estimatedDelaySeconds: bigint;
@@ -124,7 +132,8 @@ export type VariableRole =
   | VariableRole_Pricing
   | VariableRole_TxOutput
   | VariableRole_Witness
-  | VariableRole_Query;
+  | VariableRole_Query
+  | VariableRole_QueryEvents;
 
 export interface VariableRole_PaymentRecipient {
   type: 'PaymentRecipient';
@@ -158,19 +167,29 @@ export interface VariableRole_Query {
   blockNumber: bigint;
 }
 
+export interface VariableRole_QueryEvents {
+  type: 'QueryEvents';
+  emitter: Account;
+  topicMatch: Hex;
+  topic0: Hex;
+  topic1: Hex;
+  topic2: Hex;
+  topic3: Hex;
+}
+
 export interface Assumption {
   trusted: Account;
   kind: string;
 }
 
-export type Argument = Argument_AbiWrappedValue | Argument_Variable;
-
-export interface Argument_AbiWrappedValue {
-  type: 'AbiWrappedValue';
-  value: AbiWrappedValue;
-}
+export type Argument = Argument_Variable | Argument_AbiEncodedValue;
 
 export interface Argument_Variable {
   type: 'Variable';
   varIdx: number;
+}
+
+export interface Argument_AbiEncodedValue {
+  type: 'AbiEncodedValue';
+  value: AbiEncodedValue;
 }

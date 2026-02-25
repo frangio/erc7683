@@ -1,9 +1,12 @@
-import type { Address, Hex, PublicClient } from 'viem';
+import type { Address, Chain, Hex, PublicClient, Transport, WalletClient as ViemWalletClient } from 'viem';
 import type { Account } from './types.ts';
-import type { AbiWrappedValue } from './abi-wrap.ts';
+import type { AbiEncodedValue } from './abi-wrap.ts';
+
+export type WalletClient = ViemWalletClient<Transport, Chain>;
 
 export interface SolverContext {
-  getClient: (chainId: bigint) => PublicClient;
+  getPublicClient: (chainId: bigint) => PublicClient;
+  getWalletClient: (chainId: bigint) => WalletClient;
   paymentChain: bigint;
   paymentRecipient: (chainId: bigint) => Address;
   fillerAddress: Address;
@@ -14,5 +17,5 @@ export interface SolverContext {
 }
 
 interface WitnessResolver {
-  resolve(data: Hex, variableValues: AbiWrappedValue[]): Promise<AbiWrappedValue>;
+  resolve(data: Hex, variableValues: AbiEncodedValue[]): Promise<AbiEncodedValue>;
 }
